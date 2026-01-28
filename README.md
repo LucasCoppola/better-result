@@ -45,6 +45,7 @@ const message = parsed.match({
 - [Handling Errors](#handling-errors)
 - [Extracting Values](#extracting-values)
 - [Generator Composition](#generator-composition)
+- [Combining Results](#combining-results)
 - [Retry Support](#retry-support)
 - [UnhandledException](#unhandledexception)
 - [Panic](#panic)
@@ -146,6 +147,46 @@ const result = await Result.gen(async function* () {
 ```
 
 Errors from all yielded Results are automatically collected into the final error union type.
+
+## Combining Results
+
+### Short-circuit on first error
+
+Combine multiple Results - if all succeed, returns `Ok` with a tuple. If any fail, returns the first error.
+
+```ts
+const result = Result.all([
+  fetchUser(id),
+  fetchPosts(id),
+  fetchSettings(id)
+]);
+// Result<[User, Post[], Settings], NotFoundError | DatabaseError>
+
+if (result.isOk()) {
+  const [user, posts, settings] = result.value;
+}
+```
+
+### Collect all errors
+
+Use `allSettled` when you want to collect **all** errors instead of stopping at the first one:
+
+```ts
+const result = Result.allSettled([
+  validateName(form.name),    // ValidationError
+  validateEmail(form.email),  // ValidationError
+  parseAge(form.age),         // ParseError
+]);
+// Result<[Name, Email, Age], (ValidationError | ParseError)[]>
+
+if (result.isErr()) {
+  // result.error is an array of ALL errors
+  result.error.forEach((err) => {
+    console.log(err.field, err.message);
+  });
+}
+```
+
 
 ### Normalizing Error Types
 
@@ -419,6 +460,10 @@ const result = Result.deserialize<User, ValidationError>(serialized);
 | `Result.deserialize(value)`      | Rehydrate serialized Result (returns `Err<ResultDeserializationError>` on invalid input) |
 | `Result.partition(results)`      | Split array into [okValues, errValues]  |
 | `Result.flatten(result)`         | Flatten nested Result                   |
+| `Result.all(results)`            | Combine Results into single Result with tuple of values (short-circuits on first Err) |
+| `Result.allAsync(promises)`      | Combine Promise<Result>s into single Promise<Result> (short-circuits on first Err) |
+| `Result.allSettled(results)`     | Combine Results, collecting all errors instead of short-circuiting |
+| `Result.allSettledAsync(promises)` | Combine Promise<Result>s, collecting all errors |
 
 ### Instance Methods
 

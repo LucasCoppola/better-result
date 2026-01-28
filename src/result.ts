@@ -794,6 +794,132 @@ const flatten = <T, E, E2>(result: Result<Result<T, E>, E2>): Result<T, E | E2> 
 };
 
 /**
+ * Extracts Ok types from a tuple of Results, preserving tuple structure.
+ * [Result<A, E1>, Result<B, E2>] → [A, B]
+ */
+type ExtractOkTuple<T extends readonly Result<unknown, unknown>[]> = {
+  [K in keyof T]: T[K] extends Result<infer A, unknown> ? A : never;
+};
+
+/**
+ * Extracts Err types from a tuple of Results as a union.
+ * [Result<A, E1>, Result<B, E2>] → E1 | E2
+ */
+type ExtractErrUnion<T extends readonly Result<unknown, unknown>[]> = {
+  [K in keyof T]: T[K] extends Result<unknown, infer E> ? E : never;
+}[number];
+
+/**
+ * Combines an array of Results into a single Result.
+ * Returns Ok with tuple of all values if all succeed, or first Err encountered.
+ *
+ * @example
+ * Result.all([ok(1), ok("hi"), ok(true)])
+ * // => Ok([1, "hi", true]): Result<[number, string, boolean], never>
+ *
+ * Result.all([ok(1), err(new NotFoundError()), ok(true)])
+ * // => Err(NotFoundError): Result<[number, unknown, boolean], NotFoundError>
+ */
+const all = <T extends readonly Result<unknown, unknown>[]>(
+  results: readonly [...T],
+): Result<ExtractOkTuple<T>, ExtractErrUnion<T>> => {
+  const values: unknown[] = [];
+  for (const result of results) {
+    if (result.status === "error") {
+      // SAFETY: Returning first error, T phantom types preserved via cast
+      return result as unknown as Err<ExtractOkTuple<T>, ExtractErrUnion<T>>;
+    }
+    values.push(result.value);
+  }
+  // SAFETY: All results are Ok, values array matches tuple structure
+  return new Ok(values) as unknown as Ok<ExtractOkTuple<T>, ExtractErrUnion<T>>;
+};
+
+/**
+ * Combines an array of Promise<Result>s into a single Promise<Result>.
+ * Waits for all promises (via Promise.all), returns Ok with tuple of all values
+ * if all succeed, or first Err encountered.
+ *
+ * @example
+ * await Result.allAsync([Promise.resolve(ok(1)), Promise.resolve(ok(2))])
+ * // => Ok([1, 2]): Result<[number, number], never>
+ */
+const allAsync = async <T extends readonly Promise<Result<unknown, unknown>>[]>(
+  promises: readonly [...T],
+): Promise<
+  Result<
+    ExtractOkTuple<{ [K in keyof T]: Awaited<T[K]> }>,
+    ExtractErrUnion<{ [K in keyof T]: Awaited<T[K]> }>
+  >
+> => {
+  const results = await Promise.all(promises);
+  return all(results) as Result<
+    ExtractOkTuple<{ [K in keyof T]: Awaited<T[K]> }>,
+    ExtractErrUnion<{ [K in keyof T]: Awaited<T[K]> }>
+  >;
+};
+
+/**
+ * Combines an array of Results, collecting all errors instead of short-circuiting.
+ * Returns Ok with tuple of all values if all succeed, or Err with array of all errors.
+ *
+ * @example
+ * Result.allSettled([ok(1), ok("hi")])
+ * // => Ok([1, "hi"]): Result<[number, string], never[]>
+ *
+ * Result.allSettled([err(new NotFoundError()), err(new DbError())])
+ * // => Err([NotFoundError, DbError]): Result<never, (NotFoundError | DbError)[]>
+ */
+const allSettled = <T extends readonly Result<unknown, unknown>[]>(
+  results: readonly [...T],
+): Result<ExtractOkTuple<T>, ExtractErrUnion<T>[]> => {
+  const values: unknown[] = [];
+  const errors: unknown[] = [];
+
+  for (const result of results) {
+    if (result.status === "error") {
+      errors.push(result.error);
+    } else {
+      values.push(result.value);
+    }
+  }
+
+  if (errors.length > 0) {
+    // SAFETY: Collecting all errors, cast maintains type structure
+    return new Err(errors) as unknown as Err<ExtractOkTuple<T>, ExtractErrUnion<T>[]>;
+  }
+  // SAFETY: All results are Ok, values array matches tuple structure
+  return new Ok(values) as unknown as Ok<ExtractOkTuple<T>, ExtractErrUnion<T>[]>;
+};
+
+/**
+ * Combines an array of Promise<Result>s, collecting all errors instead of short-circuiting.
+ * Waits for all promises (via Promise.all), returns Ok with tuple of all values
+ * if all succeed, or Err with array of all errors.
+ *
+ * @example
+ * await Result.allSettledAsync([
+ *   Promise.resolve(err(new NotFoundError())),
+ *   Promise.resolve(err(new DbError()))
+ * ])
+ * // => Err([NotFoundError, DbError])
+ */
+const allSettledAsync = async <T extends readonly Promise<Result<unknown, unknown>>[]>(
+  promises: readonly [...T],
+): Promise<
+  Result<
+    ExtractOkTuple<{ [K in keyof T]: Awaited<T[K]> }>,
+    ExtractErrUnion<{ [K in keyof T]: Awaited<T[K]> }>[]
+  >
+> => {
+  const results = await Promise.all(promises);
+  return allSettled(results) as Result<
+    ExtractOkTuple<{ [K in keyof T]: Awaited<T[K]> }>,
+    ExtractErrUnion<{ [K in keyof T]: Awaited<T[K]> }>[]
+  >;
+};
+
+/**
  * Utilities for creating and handling Result types.
  *
  * @example
@@ -1021,4 +1147,37 @@ export const Result = {
    * Result.flatten(nested) // Ok(42)
    */
   flatten,
+  /**
+   * Combines array of Results into single Result with tuple of values.
+   * Short-circuits on first Err.
+   *
+   * @example
+   * Result.all([ok(1), ok("hi")]) // Ok([1, "hi"])
+   * Result.all([ok(1), err("fail")]) // Err("fail")
+   */
+  all,
+  /**
+   * Combines array of Promise<Result>s into single Promise<Result>.
+   * Uses Promise.all, short-circuits on first Err.
+   *
+   * @example
+   * await Result.allAsync([asyncOk(1), asyncOk(2)]) // Ok([1, 2])
+   */
+  allAsync,
+  /**
+   * Combines array of Results, collecting all errors instead of short-circuiting.
+   * Returns Ok with all values or Err with array of all errors.
+   *
+   * @example
+   * Result.allSettled([err("a"), err("b")]) // Err(["a", "b"])
+   */
+  allSettled,
+  /**
+   * Combines array of Promise<Result>s, collecting all errors.
+   * Uses Promise.all, returns Ok with all values or Err with array of all errors.
+   *
+   * @example
+   * await Result.allSettledAsync([asyncErr("a"), asyncErr("b")]) // Err(["a", "b"])
+   */
+  allSettledAsync,
 } as const;

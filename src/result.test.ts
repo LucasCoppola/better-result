@@ -1760,4 +1760,124 @@ describe("Type Inference", () => {
       Result.try({ try: () => Promise.resolve(true), catch: () => false });
     });
   });
+
+  describe("all", () => {
+    it("returns Ok with tuple of values when all succeed", () => {
+      const result = Result.all([Result.ok(1), Result.ok("hi"), Result.ok(true)]);
+      expect(result.isOk()).toBe(true);
+      expect(result.unwrap()).toEqual([1, "hi", true]);
+    });
+
+    it("returns empty tuple for empty array", () => {
+      const result = Result.all([]);
+      expect(result.isOk()).toBe(true);
+      expect(result.unwrap()).toEqual([]);
+    });
+
+    it("returns first Err when any fails (short-circuit)", () => {
+      const result = Result.all([Result.ok(1), Result.err("first"), Result.err("second")]);
+      expect(result.isErr()).toBe(true);
+      if (result.isErr()) {
+        expect(result.error).toBe("first");
+      }
+    });
+  });
+
+  describe("allAsync", () => {
+    it("returns Ok with tuple when all promises resolve to Ok", async () => {
+      const result = await Result.allAsync([
+        Promise.resolve(Result.ok(1)),
+        Promise.resolve(Result.ok("hi")),
+      ]);
+      expect(result.isOk()).toBe(true);
+      expect(result.unwrap()).toEqual([1, "hi"]);
+    });
+
+    it("returns empty tuple for empty array", async () => {
+      const result = await Result.allAsync([]);
+      expect(result.isOk()).toBe(true);
+      expect(result.unwrap()).toEqual([]);
+    });
+
+    it("returns first Err after all promises settle", async () => {
+      const result = await Result.allAsync([
+        Promise.resolve(Result.ok(1)),
+        Promise.resolve(Result.err("fail")),
+        Promise.resolve(Result.ok(3)),
+      ]);
+      expect(result.isErr()).toBe(true);
+      if (result.isErr()) {
+        expect(result.error).toBe("fail");
+      }
+    });
+  });
+
+  describe("allSettled", () => {
+    it("returns Ok with tuple when all succeed", () => {
+      const result = Result.allSettled([Result.ok(1), Result.ok("hi")]);
+      expect(result.isOk()).toBe(true);
+      expect(result.unwrap()).toEqual([1, "hi"]);
+    });
+
+    it("returns empty tuple for empty array", () => {
+      const result = Result.allSettled([]);
+      expect(result.isOk()).toBe(true);
+      expect(result.unwrap()).toEqual([]);
+    });
+
+    it("collects all errors instead of short-circuiting", () => {
+      const result = Result.allSettled([
+        Result.err("first"),
+        Result.ok(2),
+        Result.err("third"),
+      ]);
+      expect(result.isErr()).toBe(true);
+      if (result.isErr()) {
+        expect(result.error).toEqual(["first", "third"]);
+      }
+    });
+
+    it("returns array of all errors when all fail", () => {
+      type ErrorA = { _tag: "A" };
+      type ErrorB = { _tag: "B" };
+      const result = Result.allSettled([
+        Result.err<number, ErrorA>({ _tag: "A" }),
+        Result.err<string, ErrorB>({ _tag: "B" }),
+      ]);
+      expect(result.isErr()).toBe(true);
+      if (result.isErr()) {
+        const errors: (ErrorA | ErrorB)[] = result.error;
+        expect(errors).toEqual([{ _tag: "A" }, { _tag: "B" }]);
+      }
+    });
+  });
+
+  describe("allSettledAsync", () => {
+    it("returns Ok with tuple when all promises resolve to Ok", async () => {
+      const result = await Result.allSettledAsync([
+        Promise.resolve(Result.ok(1)),
+        Promise.resolve(Result.ok("hi")),
+      ]);
+      expect(result.isOk()).toBe(true);
+      expect(result.unwrap()).toEqual([1, "hi"]);
+    });
+
+    it("returns empty tuple for empty array", async () => {
+      const result = await Result.allSettledAsync([]);
+      expect(result.isOk()).toBe(true);
+      expect(result.unwrap()).toEqual([]);
+    });
+
+    it("collects all errors from resolved promises", async () => {
+      const result = await Result.allSettledAsync([
+        Promise.resolve(Result.err("a")),
+        Promise.resolve(Result.ok(2)),
+        Promise.resolve(Result.err("c")),
+      ]);
+      expect(result.isErr()).toBe(true);
+      if (result.isErr()) {
+        expect(result.error).toEqual(["a", "c"]);
+      }
+    });
+  });
 });
